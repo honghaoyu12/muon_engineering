@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nanochat-muon-bench"
+version = "0.5.0"
+description = "Correctness-first NanoChat benchmark harness for modular Muon-family experiments"
+requires-python = ">=3.10"
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[tool.setuptools]
+packages = ["nanochat_muon_lab"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
