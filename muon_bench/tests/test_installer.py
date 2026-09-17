@@ -22,6 +22,8 @@ def test_installer_is_transactional_and_injects_resume_guard(tmp_path):
     assert "sort_keys=True" in generated
     assert (tmp_path / "scripts" / "base_train.py").read_text() == base
     assert (tmp_path / "nanochat_muon_lab" / "research_optimizer.py").exists()
+    assert (tmp_path / "nanochat_muon_lab" / "runtime_state.py").exists()
+    assert (tmp_path / "nanochat_muon_lab" / "provenance.py").exists()
 
 
 def test_installer_does_not_copy_package_when_patch_validation_fails(tmp_path):

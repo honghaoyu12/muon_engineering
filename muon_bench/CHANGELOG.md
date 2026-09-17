@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.0 — 2026-09-17
+
+- Added a schema-versioned runtime-state core with explicit initial/active grouping, guarded
+  transitions, transactional restore, saved-param-group cross-checks, and pre/post-load structural
+  validation.
+- Separated construction-time expected optimizer-state schemas from rank-local observed checkpoint
+  signatures, including ownership and optional finite-value status.
+- Added canonical JSON, SHA-256 state/trajectory fingerprints, immutable run manifests, append-only
+  runtime events, complete rank-signature aggregation, and explicit resume-mode validation.
+- Added a shared model-initialization and SHA-256-derived rank-local seed policy.
+- Initialized M1 state records from `setup_research_optimizer`; trainer checkpoint/run-artifact
+  integration remains the next M2 work package.
+- Added 17 Torch-independent CPU tests for the new state and provenance contracts.
+
 ## 0.5.0 — 2026-09-16
 
 - Fourth full audit.

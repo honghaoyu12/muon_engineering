@@ -1,6 +1,6 @@
 # NanoChat Muon Benchmark Package
 
-Snapshot: **2026-09-16**.  **Package revision:** `0.5.0` (fourth audit). This is a correctness-first research harness for benchmarking Muon-family changes inside the current NanoChat training stack.
+Snapshot: **2026-09-17**.  **Package revision:** `0.6.0` (M1 state/provenance core). This is a correctness-first research harness for benchmarking Muon-family changes inside the current NanoChat training stack.
 
 The package has two goals that should not be conflated:
 
@@ -14,10 +14,13 @@ The package has two goals that should not be conflated:
 - `IMPLEMENTATION_GUIDE.md` — exact code structure, operation ordering, installation, flags, presets, and NanoChat integration details.
 - `DIAGNOSTICS.md` — exact definitions for RMS, head/group dispersion, polar residual, finite checks, and fractional-selection coverage.
 - `AUDIT_REPORT.md` — fourth-pass bug/consistency audit and remaining validation boundary.
+- `RESPONSE_TO_REVIEW_AND_REVISION_PLAN.md` — post-review implementation and qualification specification.
 - `SOURCE_SNAPSHOT.md` — upstream integration assumptions checked on 2026-09-16; experiments must still pin a commit.
 - `nanochat_muon_lab/muon_math.py` — auditable pure-PyTorch reference math.
 - `nanochat_muon_lab/research_optimizer.py` — role-aware, batched NanoChat `MuonAdamW` subclass.
 - `nanochat_muon_lab/setup.py` — NanoChat parameter classification and benchmark presets.
+- `nanochat_muon_lab/runtime_state.py` — explicit grouping transitions and expected/observed optimizer-state schemas.
+- `nanochat_muon_lab/provenance.py` — canonical fingerprints, resume modes, seed policy, manifests, and event records.
 - `nanochat_muon_lab/muonclip.py` — MHA/GQA-aware MuonClip weight-rescaling helpers for architectures where the rescaling is meaningful.
 - `install_into_nanochat.py` — non-destructive installer; creates `scripts/base_train_muon_lab.py` and leaves native `base_train.py` untouched.
 - `tests/` — CPU correctness and semantics tests.
@@ -108,6 +111,23 @@ For the dynamic head-granularity experiment:
 
 This retains optimizer state and changes Q/K/V from the configured head grouping to a full projection matrix when the specified fraction of training is reached.
 
+## State and provenance core
+
+Revision 0.6.0 adds the M1 package APIs that the trainer integration will consume:
+
+- immutable initial grouping and explicit mutable runtime grouping records;
+- transactional grouping restore and guarded stage transitions;
+- structural signatures that exclude scheduled LR, momentum, and weight-decay values;
+- expected versus rank-local observed optimizer-state descriptions;
+- canonical SHA-256 state and resolved-trajectory fingerprints;
+- shared-initialization/rank-local seed policy, resume modes, immutable manifests, and append-only events.
+
+`setup_research_optimizer` initializes the grouping records and live structural signature. Build the
+expected state schema only after the trainer has resolved world size. New integrations should apply
+phase changes through `transition_attention_grouping_`. The generated trainer still calls the legacy low-level
+grouping helper and does **not yet** save or enforce the M1 artifacts; switching that call together
+with checkpoint/run-manifest integration is M2 and remains required before Q-BASE can pass.
+
 ## Naming and numerical-solver caveats
 
 `kj_reference` follows the **current** `KellerJordan/Muon` normalized-EMA/Nesterov form. Older historical Muon snippets used an unnormalized momentum accumulator. With constant `beta` and zero initial state the two preconditioner inputs differ by the positive scalar `1-beta`, so their normalized polar directions agree in exact arithmetic; they are not bitwise identical in finite precision. The benchmark therefore fixes `beta=0.95` for the reference path unless a momentum-schedule experiment is explicitly labeled. Current NanoChat's native schedule is materially different: it ramps 0.85 -> 0.97 over 400 steps, stays at 0.97, then reaches 0.90 during LR warmdown.
@@ -146,8 +166,13 @@ Current NanoChat RMS-normalizes Q and K **after projection** and then rescales t
 
 ## Validation status
 
-Build-time CPU validation currently passes **59/59 tests**, covering:
+The suite now contains **76 CPU tests**. The 17 new Torch-independent M1 state/provenance tests pass
+in the current environment. The earlier 59-test suite passed at the v0.5.0 freeze. Its
+Torch-dependent math and optimizer modules could not be rerun for this revision because this
+environment does not provide PyTorch. Coverage includes:
 
+- canonical fingerprints, immutable manifests/events, resume modes, and seed policy;
+- explicit grouping transitions, structural validation, and expected/observed state schemas;
 - Keller/NS and GNS reference equivalence checks;
 - GNS restart/epsilon/backend-contract behavior;
 - MuonEq;

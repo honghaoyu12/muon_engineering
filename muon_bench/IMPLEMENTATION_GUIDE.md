@@ -1,6 +1,6 @@
 # Implementation Guide — Modular Muon for NanoChat
 
-**Snapshot:** 2026-09-16  
+**Snapshot:** 2026-09-17\
 **Target:** current NanoChat optimizer/training structure  
 **Design principle:** preserve NanoChat's distributed communication and AdamW parameter groups; change only the Muon compute semantics needed for controlled experiments.
 
@@ -442,6 +442,32 @@ The copied trainer accepts:
 ```
 
 At the boundary it sets `heads_per_group = num_heads` for Q/K/V groups, which converts them from head/group-wise to full-projection orthogonalization without clearing momentum or row-NorMuon state.
+
+### M1 runtime-state and provenance contract
+
+Revision 0.6.0 adds the package-level contract that makes dynamic grouping and resume identity
+explicit:
+
+- `runtime_state.py` separates immutable initial grouping, mutable active grouping, expected lazy
+  state schemas, and observed rank-local checkpoint signatures;
+- transitions validate every affected Q/K/V group before mutation, advance stage/count once, and
+  reject duplicate execution;
+- restore cross-checks explicit runtime grouping against serialized optimizer `param_groups`;
+- structural signatures intentionally exclude scheduled LR, momentum, and weight decay so they can
+  be checked both before and after `optimizer.load_state_dict`;
+- `provenance.py` supplies canonical JSON/SHA-256 fingerprints, explicit resume modes, shared versus
+  rank-local seed policy, immutable manifest publication, monotonic event logs, and rank-signature
+  completeness checks.
+
+`setup_research_optimizer` now initializes initial grouping, runtime grouping, and the live structural
+signature. The trainer must build the expected-state schema after it has resolved world size. New
+integrations should use `transition_attention_grouping_`, which rejects duplicate transitions by default. The current generated trainer intentionally retains
+the low-level `set_attention_grouping` mutation path until M2 can switch it together with explicit
+checkpoint metadata restore and validation.
+
+This is the M1 foundation only. The generated trainer still uses its v0.5 checkpoint metadata path.
+Persisting/cross-checking these new artifacts around optimizer load, plus RNG/GradScaler/dataloader
+continuity, belongs to M2 and must land before Q-BASE qualification.
 
 For a current NanoChat warmdown ratio of 0.65, `0.35` is a meaningful first switch point because warmdown begins at 35% of training. It is a hypothesis, not a fixed recommendation; compare multiple boundaries and static controls.
 

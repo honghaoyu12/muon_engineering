@@ -6,4 +6,4 @@ Import submodules explicitly inside a NanoChat checkout, e.g.:
 Keeping package import light allows the pure-math tests to run without NanoChat installed.
 """
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"

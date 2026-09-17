@@ -16,6 +16,12 @@ from copy import deepcopy
 from typing import Any
 
 from .research_optimizer import ResearchMuonAdamW
+from .runtime_state import (
+    build_initial_grouping_definition,
+    build_live_group_signature,
+    initialize_runtime_grouping_state,
+    synchronize_runtime_grouping_state_,
+)
 
 
 LOGICAL_ROLES = {"q", "k", "v", "o", "mlp_up", "mlp_down", "ve_gate"}
@@ -358,6 +364,9 @@ def setup_research_optimizer(
     optimizer.muon_lab_role_split = bool(cfg["role_split"])
     optimizer.muon_lab_config = deepcopy(cfg)
     optimizer.muon_lab_param_group_signature = _parameter_group_signature(optimizer.param_groups)
+    optimizer.muon_lab_initial_grouping = build_initial_grouping_definition(optimizer)
+    initialize_runtime_grouping_state(optimizer)
+    optimizer.muon_lab_live_group_signature = build_live_group_signature(optimizer)
     for group in optimizer.param_groups:
         group["initial_lr"] = group["lr"]
     return optimizer
@@ -381,3 +390,5 @@ def set_attention_grouping(optimizer, *, heads_per_group_q: int, heads_per_group
         proposals.append((group, hpg))
     for group, hpg in proposals:
         group["heads_per_group"] = hpg
+    synchronize_runtime_grouping_state_(optimizer)
+    optimizer.muon_lab_live_group_signature = build_live_group_signature(optimizer)
