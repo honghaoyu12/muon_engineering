@@ -77,6 +77,12 @@ if seed_init_anchor in text:
 torch.manual_seed(args.seed)
 if device_type == "cuda":
     torch.cuda.manual_seed_all(args.seed)
+random.seed(args.seed)
+try:
+    import numpy as np
+    np.random.seed(args.seed % (2**32))
+except ImportError:
+    pass
 ''', "seed initialization")
 
 # Load only model weights for an explicit weights-only resume.
