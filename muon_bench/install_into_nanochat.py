@@ -45,6 +45,11 @@ parser.add_argument("--muon-lab-override-json", type=str, default="{}",
     help="JSON dict overriding research-preset fields; unknown keys fail loudly")
 ''', "CLI")
 
+seed_anchor = 'parser.add_argument("--run", type=str, default="dummy", help="wandb run name (\'dummy\' disables wandb logging)")\n'
+if seed_anchor in text:
+    text = replace_once(text, seed_anchor, seed_anchor + '''parser.add_argument("--seed", type=int, default=42, help="shared model/data RNG seed")
+''', "seed")
+
 # Explicit resume semantics are part of the provenance contract. Keep this optional for the
 # small installer fixture used by package tests; the real NanoChat source contains the anchor.
 resume_anchor = 'parser.add_argument("--resume-from-step", type=int, default=-1, help="resume training from this step (-1 = disable)")\n'
@@ -55,6 +60,7 @@ if resume_anchor in text:
 ''', "resume mode")
 
 imports_anchor = 'from scripts.base_eval import evaluate_core\n'
+rng_helpers = '\nimport base64\nimport pickle\nimport random\n\ndef _encode_rng_tensor(state):\n    return base64.b64encode(bytes(state.cpu().tolist())).decode("ascii")\n\ndef _decode_rng_tensor(encoded):\n    return torch.tensor(list(base64.b64decode(encoded)), dtype=torch.uint8)\n\ndef _capture_rng_state():\n    state = {"torch_cpu": _encode_rng_tensor(torch.get_rng_state()), "python": base64.b64encode(pickle.dumps(random.getstate(), protocol=4)).decode("ascii")}\n    if torch.cuda.is_available():\n        state["torch_cuda"] = [_encode_rng_tensor(item) for item in torch.cuda.get_rng_state_all()]\n    try:\n        import numpy as np\n        state["numpy"] = base64.b64encode(pickle.dumps(np.random.get_state(), protocol=4)).decode("ascii")\n    except ImportError:\n        pass\n    return state\n\ndef _restore_rng_state(state):\n    if not state:\n        return\n    torch.set_rng_state(_decode_rng_tensor(state["torch_cpu"]))\n    random.setstate(pickle.loads(base64.b64decode(state["python"])))\n    if "torch_cuda" in state and torch.cuda.is_available():\n        torch.cuda.set_rng_state_all([_decode_rng_tensor(item) for item in state["torch_cuda"]])\n    if "numpy" in state:\n        try:\n            import numpy as np\n            np.random.set_state(pickle.loads(base64.b64decode(state["numpy"])))\n        except ImportError:\n            pass\n\n'
 if imports_anchor in text:
     text = replace_once(text, imports_anchor, imports_anchor + '''
 from pathlib import Path
@@ -62,6 +68,16 @@ import hashlib
 import platform
 import subprocess
 ''', "M2 imports")
+    text = replace_once(text, "import subprocess\n", "import subprocess\n" + rng_helpers, "RNG helpers")
+
+
+seed_init_anchor = 'ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)\n'
+if seed_init_anchor in text:
+    text = replace_once(text, seed_init_anchor, seed_init_anchor + '''# compute_init establishes NanoChat defaults; the benchmark CLI owns the experiment seed.
+torch.manual_seed(args.seed)
+if device_type == "cuda":
+    torch.cuda.manual_seed_all(args.seed)
+''', "seed initialization")
 
 # Load only model weights for an explicit weights-only resume.
 load_anchor = '    model_data, optimizer_data, meta_data = load_checkpoint(checkpoint_dir, args.resume_from_step, device, load_optimizer=True, rank=ddp_rank)\n'
@@ -176,6 +192,19 @@ new_resume = '''if resuming:
         del optimizer_data'''
 text = replace_once(text, old_resume, new_resume, "optimizer resume")
 
+_scaler_resume_block = scaler_anchor = 'if scaler is not None:\n    print0("GradScaler enabled for fp16 training")\n'
+if scaler_anchor in text:
+    text = replace_once(text, scaler_anchor, scaler_anchor + '''_resume_rng_state = meta_data.get("rng_state") if resuming else None
+_resume_scaler_state = meta_data.get("grad_scaler_state") if resuming else None
+if resuming and args.muon_lab_resume_mode == "exact":
+    if _resume_rng_state is None or (scaler is not None and _resume_scaler_state is None):
+        raise RuntimeError("Exact resume requires checkpointed RNG and GradScaler state")
+if scaler is not None and _resume_scaler_state is not None:
+    scaler.load_state_dict(_resume_scaler_state)
+if _resume_rng_state is not None:
+    _restore_rng_state(_resume_rng_state)
+''', "resume RNG state")
+
 # 4) Training-loop momentum/WD policy and optional geometry phase switch.
 old_sched = '''        if group['kind'] == 'muon':
             group["momentum"] = muon_momentum
@@ -208,11 +237,14 @@ new_sched = '''        if group['kind'] == 'muon':
                     })'''
 text = replace_once(text, old_sched, new_sched, "training-loop Muon schedule")
 
-provenance_block = '\n# M2 provenance/checkpoint integration. This runs after the resolved training horizon exists.\nfrom pathlib import Path\nimport platform\n\ndef _muon_lab_gpu_identity():\n    if not torch.cuda.is_available():\n        return []\n    return [{"name": torch.cuda.get_device_name(i), "capability": list(torch.cuda.get_device_capability(i))} for i in range(torch.cuda.device_count())]\n\n_muon_lab_trajectory = {\n    "num_iterations": num_iterations,\n    "total_tokens": total_tokens,\n    "warmup_steps": args.warmup_steps,\n    "warmdown_ratio": args.warmdown_ratio,\n    "final_lr_frac": args.final_lr_frac,\n    "total_batch_size": total_batch_size,\n    "device_batch_size": args.device_batch_size,\n    "max_seq_len": args.max_seq_len,\n    "world_size": ddp_world_size,\n    "momentum_policy": args.muon_lab_momentum_policy,\n    "head_switch_frac": args.muon_lab_head_switch_frac,\n}\n_muon_lab_trajectory_fp = trajectory_fingerprint(_muon_lab_trajectory)\n_muon_lab_state_fp = state_compatibility_fingerprint({\n    "model_config": model_config_kwargs,\n    "optimizer_config": getattr(optimizer, "muon_lab_config", {"preset": "native"}),\n    "group_signature": _live_group_signature,\n    "expected_state_schema": _expected_state_schema,\n    "world_size": ddp_world_size,\n})\n_muon_lab_manifest = build_run_manifest(\n    output_dirname,\n    code={"trainer": "base_train_muon_lab"},\n    environment={"python": platform.python_version(), "torch": torch.__version__, "cuda": torch.version.cuda, "world_size": ddp_world_size, "compute_dtype": str(COMPUTE_DTYPE).removeprefix("torch."), "gpu": _muon_lab_gpu_identity()},\n    model=model_config_kwargs,\n    optimizer={"preset": args.muon_lab_preset, "config": getattr(optimizer, "muon_lab_config", {"preset": "native"}), "initial_grouping": _initial_grouping},\n    trajectory=_muon_lab_trajectory,\n    data={"tokenizer_vocab_size": vocab_size},\n)\n_muon_lab_manifest_path = Path(checkpoint_dir) / "run_manifest.json"\n_muon_lab_events_path = Path(checkpoint_dir) / "runtime_events.jsonl"\nif _muon_lab_manifest_path.exists():\n    _published = json.loads(_muon_lab_manifest_path.read_text(encoding="utf-8"))\n    if not resuming:\n        raise RuntimeError(f"Refusing to reuse existing run manifest: {_muon_lab_manifest_path}")\n    if args.muon_lab_resume_mode == "exact" and fingerprint_payload(_published) != fingerprint_payload(_muon_lab_manifest):\n        raise RuntimeError("Exact resume requires an identical run manifest")\nelse:\n    write_immutable_manifest(_muon_lab_manifest_path, _muon_lab_manifest, rank=ddp_rank, barrier=(dist.barrier if ddp else None))\nif master_process:\n    _events = read_runtime_events(_muon_lab_events_path)\n    append_runtime_event(_muon_lab_events_path, {"sequence_number": (_events[-1]["sequence_number"] + 1 if _events else 0), "event": "resume" if resuming else "run_start", "step": args.resume_from_step if resuming else 0, "mode": args.muon_lab_resume_mode})\nif resuming and meta_data.get("muon_lab_provenance"):\n    _saved = meta_data["muon_lab_provenance"]\n    verify_fingerprint(_saved["state_compatibility"], expected_type="state_compatibility")\n    verify_fingerprint(_saved["trajectory"], expected_type="training_trajectory")\n    if args.muon_lab_resume_mode != "weights-only" and _saved["state_compatibility"]["sha256"] != _muon_lab_state_fp["sha256"]:\n        raise RuntimeError("Optimizer/model state compatibility fingerprint mismatch on resume")\n    if args.muon_lab_resume_mode == "exact" and _saved["trajectory"]["sha256"] != _muon_lab_trajectory_fp["sha256"]:\n        raise RuntimeError("Exact resume requires an identical training trajectory")\n'
+provenance_block = '\n# M2 provenance/checkpoint integration. This runs after the resolved training horizon exists.\nfrom pathlib import Path\nimport platform\n\ndef _muon_lab_gpu_identity():\n    if not torch.cuda.is_available():\n        return []\n    return [{"name": torch.cuda.get_device_name(i), "capability": list(torch.cuda.get_device_capability(i))} for i in range(torch.cuda.device_count())]\n\n_muon_lab_trajectory = {\n    "num_iterations": num_iterations,\n    "total_tokens": total_tokens,\n    "warmup_steps": args.warmup_steps,\n    "warmdown_ratio": args.warmdown_ratio,\n    "final_lr_frac": args.final_lr_frac,\n    "total_batch_size": total_batch_size,\n    "device_batch_size": args.device_batch_size,\n    "max_seq_len": args.max_seq_len,\n    "world_size": ddp_world_size,\n    "momentum_policy": args.muon_lab_momentum_policy,\n    "head_switch_frac": args.muon_lab_head_switch_frac,\n    "seed": args.seed\n}\n_muon_lab_trajectory_fp = trajectory_fingerprint(_muon_lab_trajectory)\n_muon_lab_state_fp = state_compatibility_fingerprint({\n    "model_config": model_config_kwargs,\n    "optimizer_config": getattr(optimizer, "muon_lab_config", {"preset": "native"}),\n    "group_signature": _live_group_signature,\n    "expected_state_schema": _expected_state_schema,\n    "world_size": ddp_world_size,\n})\n_muon_lab_manifest = build_run_manifest(\n    output_dirname,\n    code={"trainer": "base_train_muon_lab"},\n    environment={"python": platform.python_version(), "torch": torch.__version__, "cuda": torch.version.cuda, "world_size": ddp_world_size, "compute_dtype": str(COMPUTE_DTYPE).removeprefix("torch."), "gpu": _muon_lab_gpu_identity()},\n    model=model_config_kwargs,\n    optimizer={"preset": args.muon_lab_preset, "config": getattr(optimizer, "muon_lab_config", {"preset": "native"}), "initial_grouping": _initial_grouping},\n    trajectory=_muon_lab_trajectory,\n    data={"tokenizer_vocab_size": vocab_size},\n)\n_muon_lab_manifest_path = Path(checkpoint_dir) / "run_manifest.json"\n_muon_lab_events_path = Path(checkpoint_dir) / "runtime_events.jsonl"\nif _muon_lab_manifest_path.exists():\n    _published = json.loads(_muon_lab_manifest_path.read_text(encoding="utf-8"))\n    if not resuming:\n        raise RuntimeError(f"Refusing to reuse existing run manifest: {_muon_lab_manifest_path}")\n    if args.muon_lab_resume_mode == "exact" and fingerprint_payload(_published) != fingerprint_payload(_muon_lab_manifest):\n        raise RuntimeError("Exact resume requires an identical run manifest")\nelse:\n    write_immutable_manifest(_muon_lab_manifest_path, _muon_lab_manifest, rank=ddp_rank, barrier=(dist.barrier if ddp else None))\nif master_process:\n    _events = read_runtime_events(_muon_lab_events_path)\n    append_runtime_event(_muon_lab_events_path, {"sequence_number": (_events[-1]["sequence_number"] + 1 if _events else 0), "event": "resume" if resuming else "run_start", "step": args.resume_from_step if resuming else 0, "mode": args.muon_lab_resume_mode})\nif resuming and meta_data.get("muon_lab_provenance"):\n    _saved = meta_data["muon_lab_provenance"]\n    verify_fingerprint(_saved["state_compatibility"], expected_type="state_compatibility")\n    verify_fingerprint(_saved["trajectory"], expected_type="training_trajectory")\n    if args.muon_lab_resume_mode != "weights-only" and _saved["state_compatibility"]["sha256"] != _muon_lab_state_fp["sha256"]:\n        raise RuntimeError("Optimizer/model state compatibility fingerprint mismatch on resume")\n    if args.muon_lab_resume_mode == "exact" and _saved["trajectory"]["sha256"] != _muon_lab_trajectory_fp["sha256"]:\n        raise RuntimeError("Exact resume requires an identical training trajectory")\n'
 _provenance_anchor = 'print0(f"Total training FLOPs estimate: {num_flops_per_token * total_tokens:e}")\n'
 if _provenance_anchor in text:
     text = replace_once(text, _provenance_anchor, _provenance_anchor + provenance_block, "M2 provenance")
 _checkpoint_meta_anchor = '                "loop_state": { # all loop state (other than step) so that we can resume training\n'
+_rng_meta_anchor = '                "loop_state": { # all loop state (other than step) so that we can resume training\n'
+if _rng_meta_anchor in text:
+    text = replace_once(text, _rng_meta_anchor, '                "rng_state": _capture_rng_state(),\n                "grad_scaler_state": scaler.state_dict() if scaler is not None else None,\n' + _rng_meta_anchor, "RNG checkpoint metadata")
 if _checkpoint_meta_anchor in text:
     text = replace_once(text, _checkpoint_meta_anchor, '                "muon_lab_provenance": {\n                    "manifest_sha256": fingerprint_payload(_muon_lab_manifest),\n                    "state_compatibility": _muon_lab_state_fp,\n                    "trajectory": _muon_lab_trajectory_fp,\n                    "runtime_grouping_state": get_active_grouping_state(optimizer),\n                    "live_group_signature": build_live_group_signature(optimizer),\n                    "expected_state_schema": _expected_state_schema,\n                    "observed_state_signature": build_observed_state_signature(optimizer, rank=ddp_rank, world_size=ddp_world_size),\n                },\n' + _checkpoint_meta_anchor, "M2 checkpoint metadata")
 
