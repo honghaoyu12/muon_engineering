@@ -8,3 +8,6 @@ venv/
 .env
 .env.*
 *.log
+
+# Local NanoChat/Muon experiment checkpoints and runtime artifacts
+.runtime/
