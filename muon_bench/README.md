@@ -35,7 +35,7 @@ python /path/to/nanochat_muon_bench/install_into_nanochat.py
 
 The installer deliberately fails if the expected current-NanoChat patch points are not found exactly once. That is preferable to silently benchmarking against an upstream script whose semantics have changed.
 
-The performance presets use the official `gram-newton-schulz` package. Install the version appropriate for your CUDA/PyTorch/GPU environment before running `gns_official` presets. The included pure-PyTorch GNS implementation is for correctness testing, not performance claims. The current upstream GNS README specifies PyTorch >=2.7.1, CUDA >=12.9, and H100 or B200/B300 as named tested hardware. H200 is Hopper but is not explicitly named there, so treat H200 support as a required smoke-test gate rather than an assumption.
+The performance presets use the official `gram-newton-schulz` package. Install the version appropriate for your CUDA/PyTorch/GPU environment before running `gns_official` presets. The included pure-PyTorch GNS implementation is for correctness testing, not performance claims. The main research path is single-GPU bf16; validate the official backend on the GPU actually available for the campaign rather than assuming H200 support.
 
 For package development/tests outside a NanoChat checkout, editable installation is optional but convenient:
 
@@ -53,7 +53,7 @@ python -m pytest -q
 
 ```bash
 python -m scripts.base_train_muon_lab \
-  --depth=4 --max-seq-len=512 --device-batch-size=1 \
+  --seed=42 --depth=4 --max-seq-len=512 --device-batch-size=1 \
   --eval-tokens=512 --core-metric-every=-1 \
   --total-batch-size=512 --num-iterations=20 \
   --muon-lab-preset=kj_reference
@@ -124,9 +124,7 @@ Revision 0.6.0 adds the M1 package APIs that the trainer integration will consum
 
 `setup_research_optimizer` initializes the grouping records and live structural signature. Build the
 expected state schema only after the trainer has resolved world size. New integrations should apply
-phase changes through `transition_attention_grouping_`. The generated trainer still calls the legacy low-level
-grouping helper and does **not yet** save or enforce the M1 artifacts; switching that call together
-with checkpoint/run-manifest integration is M2 and remains required before Q-BASE can pass.
+phase changes through `transition_attention_grouping_`. The generated trainer now integrates the runtime grouping and provenance artifacts. Single-GPU exact resume is the blocking research qualification path. Distributed ownership and collective qualification remain deferred until the project makes distributed scaling or production-throughput claims.
 
 ## Naming and numerical-solver caveats
 

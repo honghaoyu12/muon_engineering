@@ -15,7 +15,7 @@ We accept the review's central conclusion.
 
 The package is already strong enough at the **research-design** level to justify continued work: it separates the Keller–Jordan reference transform, orthogonalizer backend, polynomial schedule, parameter grouping, head-wise geometry, MuonEq, Muon+/NorMuon, and fractional error feedback into independently testable stages. The review also positively assesses the preservation of NanoChat's optimizer-owned distributed execution model, the GQA-aware role classifier, the neutral `fractional_ef` naming, and the decision not to treat MuonClip as a stock NanoChat toggle.
 
-The main weakness has shifted. It is no longer lack of algorithmic modularity. It is that the highest-risk execution paths have not yet been validated end to end in the real NanoChat/CUDA/distributed/checkpoint environment.
+The main weakness has shifted. It is no longer lack of algorithmic modularity. It is that the highest-risk execution paths have not yet been validated end to end in the real NanoChat/CUDA/checkpoint environment. Distributed execution is a separate deferred qualification track because the initial optimizer campaign is intentionally single-GPU.
 
 The next release should therefore be an **integration-validation release**, not a feature release.
 
@@ -44,7 +44,8 @@ Not every review item is the same kind of problem. The next release should disti
 | Review item | Classification | Required action |
 |---|---|---|
 | Dynamic head-switch metadata becomes stale | **Confirmed provenance/implicit-restore bug** | Make runtime state explicit and validate it before any dynamic-grouping experiment |
-| GPU/distributed paths lack executable coverage | **Blocking validation gap** | Close before substantive distributed research runs |
+| GPU path lacks executable coverage | **Blocking validation gap** | Close before substantive single-GPU research runs |
+| Distributed paths lack executable coverage | **Deferred scaling gap** | Close before distributed or production-throughput claims |
 | Native-vs-research timing is structurally confounded | **Claim limitation** | Enforce reporting rules; fuse winner before production claims |
 | Resume validation omits training trajectory | **Confirmed resume/provenance gap** | Add trajectory identity and exact-resume checks |
 | Official GNS is not pinned/numerically validated | **Blocking dependency-validation gap for GNS phases** | Pin and validate before Phase C |
@@ -59,7 +60,8 @@ The coding-agent review already defines `P1/P2/P3`. This document does **not** i
 
 Instead, every implementation task is assigned one of these gate labels:
 
-- **BLOCKING-BASE** — required before the baseline/Keller benchmark campaign;
+- **BLOCKING-BASE** — required before the single-GPU native/Keller benchmark campaign;
+- **DEFERRED-DISTRIBUTED** — required before distributed scaling, cluster-utilization, or production-throughput claims;
 - **BLOCKING-GNS** — required before GNS experiments;
 - **BLOCKING-DYNAMIC** — required before dynamic head-grouping experiments;
 - **BLOCKING-PRODUCTION** — required before production throughput claims;
@@ -380,7 +382,7 @@ Check:
 - every role with a finite, nonzero gradient and expected participation receives the intended update;
 - parameters with zero/no gradient do not spuriously change except through explicitly applicable weight decay.
 
-### Q-BASE-4 — distributed ownership and collective correctness
+### Deferred-DISTRIBUTED-1 — distributed ownership and collective correctness
 
 Run at least a two-rank test through the real parent optimizer communication scaffold.
 
@@ -426,7 +428,7 @@ Verify:
 - stale buffer contents cannot leak into gathered updates;
 - state shapes and ownership remain stable.
 
-### Q-BASE-5 — world-size parity test with the same effective global gradient
+### Deferred-DISTRIBUTED-2 — world-size parity test with the same effective global gradient
 
 A world-size comparison is meaningful only if both executions represent the same mathematical update.
 
@@ -482,21 +484,20 @@ A data-identity fingerprint is not a substitute for the dataloader cursor/state.
 }.
 \]
 
-### Q-BASE-7 — short 8×H200 integration smoke run
+### Q-BASE-7 — short single-GPU integration smoke run
 
-After the single-/two-rank tests pass, run a short 8×H200 non-GNS research preset and verify:
+After the single-GPU tests pass, run a short non-GNS research preset on the available GPU and verify:
 
-- collective completion;
-- equality/consistency of gathered parameters across ranks;
+- successful forward/backward/optimizer completion;
 - no NaN/Inf;
-- expected sharded state ownership;
+- expected local optimizer state shapes and dtypes;
 - checkpoint creation and short exact resume;
 - peak memory;
 - basic profiler trace.
 
 ### Q-BASE exit
 
-After `Q-BASE-0` through `Q-BASE-7` pass, the project may begin substantive **Phase B native/Keller baseline experiments**.
+After `Q-BASE-0` through `Q-BASE-3`, `Q-BASE-6`, and the single-GPU `Q-BASE-7` pass, the project may begin substantive **Phase B native/Keller baseline experiments**. The deferred distributed track is not required for these optimizer comparisons.
 
 ---
 
@@ -1168,7 +1169,7 @@ production_candidate/fractional configuration
 
 Then run `kj_gns` after Q-GNS dependency availability is established.
 
-### Distributed
+### Deferred distributed
 
 At minimum:
 
@@ -1213,14 +1214,12 @@ Require:
 - [ ] preflight passes;
 - [ ] explicit reproducibility/seed policy exists and is logged;
 - [ ] native copied-trainer path reproduces unmodified native behavior within expected nondeterminism;
-- [ ] real single-GPU research optimizer step passes;
-- [ ] multi-rank ownership/collective tests pass;
-- [ ] zero-ownership/padding tests pass;
+- [ ] single-GPU research optimizer step passes;
 - [ ] exact static checkpoint/resume passes including dataloader, per-rank RNG-position, and active GradScaler continuity;
-- [ ] short 8×H200 non-GNS smoke run passes;
+- [ ] short single-GPU non-GNS smoke run passes;
 - [ ] immutable run provenance is generated automatically.
 
-GNS and dynamic-switch qualification are **not** prerequisites for Phase B.
+GNS, dynamic-switch, and distributed qualification are **not** prerequisites for Phase B.
 
 ---
 
@@ -1294,8 +1293,8 @@ The current search space is already large enough to answer the main research que
 ## Finding 2 — Distributed and GPU paths lack executable coverage
 
 **Status:** accepted.\
-**Action:** real single-GPU step, two-rank collectives, padding/zero ownership, exact resume, and 8×H200 smoke tests.\
-**Gate:** `BLOCKING-BASE`.
+**Action:** real single-GPU step, exact resume, and a short single-GPU smoke test for the initial optimizer campaign. Two-rank collectives, padding/zero ownership, world-size parity, and 8×H200 throughput smoke are deferred until distributed scaling or production-throughput claims are in scope.\
+**Gate:** `BLOCKING-BASE` for the single-GPU campaign; `DEFERRED-DISTRIBUTED` for distributed claims.
 
 ## Finding 3 — Native-vs-research timing is structurally confounded
 
@@ -1389,9 +1388,9 @@ Deliver:
 3. RNG/scaler/dataloader/loop checkpoint semantics;
 4. exact-checkout preflight and install/compile/import qualification;
 5. real single-GPU NanoChat smoke coverage;
-6. multi-rank ownership, collective, padding, and zero-ownership coverage;
-7. static and dynamic exact-resume coverage;
-8. a Q-BASE qualification report, including the required 8×H200 smoke result.
+6. static exact-resume coverage including RNG, GradScaler, and dataloader state;
+7. a Q-BASE qualification report for the single-GPU research path;
+8. a separate deferred distributed qualification plan.
 
 **Exit:** Q-BASE passes for the pinned NanoChat environment. Phase B may begin.
 

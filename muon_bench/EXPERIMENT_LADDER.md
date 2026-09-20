@@ -26,6 +26,12 @@ Secondary metrics:
 
 Do not call a feature a speedup merely because optimizer milliseconds fall. End-to-end tokens/s and time-to-quality matter.
 
+### Primary execution scope
+
+The first research campaign is single-GPU bf16. The optimizer questions in this ladder—update quality, stability, convergence, checkpoint continuity, and optimizer cost—can be answered without distributed execution, and single-GPU runs are the practical default when a fixed multi-GPU allocation is unavailable. Use one GPU, one fixed model/configuration, and identical seeds within each comparison block.
+
+Distributed ownership, collective communication, world-size parity, and multi-GPU throughput are deferred qualification work. They become blocking only for claims about distributed scaling, cluster utilization, or production throughput; they do not block Phase B/C optimizer comparisons.
+
 **Fusion confound:** native NanoChat uses compiled/fused Muon kernels while this research path is deliberately explicit/correctness-first. Therefore native-vs-research optimizer milliseconds are not a clean algorithm-only comparison. Use BPB-vs-tokens/steps for algorithmic claims, use `role_split_dion_gns` and other within-harness controls for systems attribution, and fuse/port the winner before claiming production throughput superiority.
 
 ---
@@ -62,7 +68,7 @@ PYTHONPATH=. python -m pytest -q
 
 Expected in this package build: `59 passed`. The CPU suite covers pure math, batched classic and fractional-EF semantics, GQA role grouping, LR-compensation/WD separation, and MuonClip helper behavior.
 
-The current upstream GNS README names H100 and B200/B300 and requires PyTorch >=2.7.1 plus CUDA >=12.9. Because H200 is not explicitly named there, installation plus a numerical/kernel smoke test on H200 is an explicit gate rather than an assumed supported configuration.
+The current upstream GNS README names H100 and B200/B300 and requires PyTorch >=2.7.1 plus CUDA >=12.9. Because H200 is not explicitly named there, installation plus a numerical/kernel smoke test on the available target GPU is an explicit gate rather than an assumed supported configuration.
 
 Before a large run, add GPU tests for:
 
@@ -92,7 +98,7 @@ For `kj_reference`, one GNS preset, and `production_candidate`, compare an unint
 This is the engineering baseline to beat.
 
 ```bash
-torchrun --standalone --nproc_per_node=8 -m scripts.base_train_muon_lab \
+python -m scripts.base_train_muon_lab \
   --run muonlab_native_s0 \
   --muon-lab-preset native \
   <your normal NanoChat benchmark args>
@@ -103,7 +109,7 @@ Current native NanoChat bundles PE + MuonEq + Frobenius snap + factored NorMuon 
 ## B1. Keller matrix-transform reference
 
 ```bash
-torchrun --standalone --nproc_per_node=8 -m scripts.base_train_muon_lab \
+python -m scripts.base_train_muon_lab \
   --run muonlab_kj_s0 \
   --muon-lab-preset kj_reference \
   --muon-lab-momentum-policy constant \
@@ -437,7 +443,7 @@ Promote the best 2–3 candidates to at least two larger depths/model sizes. Do 
 
 ## Tier 4 — production pilot
 
-Only the best static stack and at most one dynamic/fractional variant. At this point measure actual cluster utilization, communication overlap, optimizer kernel occupancy, and checkpoint/restart reliability. Treat any change in world size or parallel topology as a new optimizer-state experiment unless an explicit state migration is implemented.
+Only the best static stack and at most one dynamic/fractional variant. At this point, keep the comparison single-GPU and measure optimizer cost, end-to-end step time, memory, and checkpoint/restart reliability. Defer cluster utilization, communication overlap, and world-size changes until a candidate is selected for distributed qualification; treat any change in world size or parallel topology as a new optimizer-state experiment unless an explicit state migration is implemented.
 
 ---
 
