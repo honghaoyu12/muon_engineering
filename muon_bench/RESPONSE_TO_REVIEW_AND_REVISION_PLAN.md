@@ -1318,7 +1318,7 @@ The current search space is already large enough to answer the main research que
 
 **Status:** diagnosis accepted; remedy refined.\
 **Action:** document inherited NanoChat PyTorch/CUDA environment and add non-mutating preflight checks; do not force-install an arbitrary torch wheel.\
-**Gate:** `NONBLOCKING`, but preflight itself is part of `Q-BASE`.
+**Gate:** `NONBLOCKING`, but the implemented non-mutating preflight is part of `Q-BASE`.
 
 ## Finding 7 — Installer tests use synthetic fixtures
 
@@ -1386,7 +1386,7 @@ Deliver:
 1. thin generated-trainer hooks into the state/provenance APIs;
 2. immutable run manifest, append-only events, and unique run directories;
 3. RNG/scaler/dataloader/loop checkpoint semantics;
-4. exact-checkout preflight and install/compile/import qualification;
+4. exact-checkout preflight, dataset manifest, and install/compile/import qualification;
 5. real single-GPU NanoChat smoke coverage;
 6. static exact-resume coverage including RNG, GradScaler, and dataloader state;
 7. a Q-BASE qualification report for the single-GPU research path;

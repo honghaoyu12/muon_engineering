@@ -24,6 +24,8 @@ The package has two goals that should not be conflated:
 - `nanochat_muon_lab/muonclip.py` — MHA/GQA-aware MuonClip weight-rescaling helpers for architectures where the rescaling is meaningful.
 - `install_into_nanochat.py` — non-destructive installer; creates `scripts/base_train_muon_lab.py` and leaves native `base_train.py` untouched.
 - `tests/` — CPU correctness and semantics tests.
+- `nanochat_muon_lab/preflight.py` — non-mutating checkout, runtime, CUDA, dtype, and GNS identity report.
+- `nanochat_muon_lab/dataset_manifest.py` — content-hashed project dataset/tokenizer manifest generator.
 
 ## Install into a pinned NanoChat checkout
 
@@ -48,6 +50,19 @@ python -m pytest -q
 ```
 
 `--no-deps` is intentional: the benchmark should inherit the pinned NanoChat/PyTorch/CUDA environment rather than trying to replace a working GPU stack.
+
+Before a run, generate a non-mutating environment report and record project-owned data identities:
+
+```bash
+PYTHONPATH=/path/to/muon_bench:/path/to/nanochat \
+  python -m nanochat_muon_lab.preflight --json > .runtime/preflight_report.json
+python -m nanochat_muon_lab.dataset_manifest \
+  --data-dir .runtime/nanochat_muon_lab_recovery_smoke/base_data_climbmix \
+  --tokenizer-dir .runtime/nanochat_muon_lab_recovery_smoke/tokenizer \
+  --output .runtime/nanochat_muon_lab_recovery_smoke/dataset_manifest.json
+```
+
+The manifest hashes every parquet and tokenizer artifact; runtime reports and data stay under this project's `.runtime/` directory.
 
 ## First smoke test
 
@@ -164,10 +179,9 @@ Current NanoChat RMS-normalizes Q and K **after projection** and then rescales t
 
 ## Validation status
 
-The suite now contains **76 CPU tests**. The 17 new Torch-independent M1 state/provenance tests pass
-in the current environment. The earlier 59-test suite passed at the v0.5.0 freeze. Its
-Torch-dependent math and optimizer modules could not be rerun for this revision because this
-environment does not provide PyTorch. Coverage includes:
+The suite now contains **78 tests**, and all pass in the current shared environment. The 17 new
+Torch-independent M1 state/provenance tests and the CPU-side preflight/dataset-manifest checks are
+included. Coverage includes:
 
 - canonical fingerprints, immutable manifests/events, resume modes, and seed policy;
 - explicit grouping transitions, structural validation, and expected/observed state schemas;
